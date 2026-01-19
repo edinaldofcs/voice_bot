@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+python-multipart
+requests
+edge-tts
+SpeechRecognition
+aiofiles
+pydub
+openai
+python-dotenv
