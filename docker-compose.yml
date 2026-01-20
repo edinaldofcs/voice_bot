@@ -1,0 +1,25 @@
+services:
+  backend:
+    build: ./backend
+    container_name: voice_backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/tts_cache:/app/tts_cache
+      - ./backend/.env:/app/.env
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: always
+
+  frontend:
+    image: node:20-alpine
+    container_name: voice_frontend
+    working_dir: /app
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+    command: sh -c "npm install && npm run dev -- --host"
+    depends_on:
+      - backend
+    restart: always

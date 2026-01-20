@@ -58,8 +58,15 @@ Uma solução de ponta para comunicação por voz em tempo real, integrando Inte
    OPENAI_API_KEY=sua_chave_aqui
    ```
 
-3. **Instalação Automática**:
-   O projeto conta com um script que automatiza a limpeza de portas e inicialização:
+3. **Execução com Docker (Recomendado)**:
+   Se você tem o Docker e Docker Compose instalados, pode subir todo o ambiente (Backend + Frontend) com um único comando:
+   ```bash
+   docker-compose up --build
+   ```
+   Isso garantirá que todas as dependências de sistema (como FFmpeg) estejam configuradas corretamente dentro dos containers.
+
+4. **Instalação Automática (Local)**:
+   O projeto conta com um script que automatiza a limpeza de portas e inicialização local:
    ```bash
    chmod +x start.sh
    ./start.sh
