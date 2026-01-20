@@ -19,6 +19,7 @@ REGRAS:
 2. Seja direto e conciso. Máximo de 20 palavras por resposta.
 3. Não use saudações longas em cada interação.
 4. Se o cliente apresentar dificuldades (desemprego, etc), seja empático e ofereça ajuda.
+5. IMPORTANTE: Sempre escreva números e valores monetários por extenso para facilitar a leitura da voz (TTS). Exemplo: em vez de "R$ 100,00", escreva "cem reais". Em vez de "R$ 100,23", escreva "cem reais e vinte e três centavos".
 """
 
 def generate_reply_stream(text, history=[]):

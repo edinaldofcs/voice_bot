@@ -10,7 +10,7 @@ import speech_recognition as sr
 from pydub import AudioSegment
 import edge_tts
 from llm_service import generate_reply_stream
-from tree_service import get_tree_response
+from tree_service import get_tree_response, get_next_possible_responses
 
 app = FastAPI()
 
@@ -60,6 +60,17 @@ async def generate_and_send_tts(sentence, websocket, client_id, sentence_count):
     audio_data = await get_cached_tts(sentence)
     await websocket.send_bytes(audio_data)
     print(f"[{client_id}] Sentença {sentence_count} Áudio pronto em: {time.time() - tts_start:.4f}s")
+
+async def pre_cache_next_responses(current_state, session_data):
+    """Gera o cache de áudio para todas as próximas falas possíveis da árvore."""
+    next_texts = get_next_possible_responses(current_state, session_data)
+    if not next_texts:
+        return
+    
+    print(f"[CACHE] Pré-carregando {len(next_texts)} possíveis próximas falas...")
+    tasks = [get_cached_tts(text) for text in next_texts]
+    await asyncio.gather(*tasks)
+    print(f"[CACHE] Pré-carregamento concluído.")
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -139,6 +150,9 @@ async def websocket_endpoint(websocket: WebSocket):
                     
                     session_data["history"].append({"role": "user", "text": user_text})
                     session_data["history"].append({"role": "assistant", "text": ai_text})
+                    
+                    # Proactive Caching: Gera áudios para os próximos estados possíveis em background
+                    asyncio.create_task(pre_cache_next_responses(next_state, session_data))
                     
                 else:
                     # MODO IA

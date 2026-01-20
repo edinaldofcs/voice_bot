@@ -12,14 +12,13 @@ services:
     restart: always
 
   frontend:
-    image: node:20-alpine
+    build: ./frontend
     container_name: voice_frontend
-    working_dir: /app
     ports:
       - "5173:5173"
     volumes:
       - ./frontend:/app
-    command: sh -c "npm install && npm run dev -- --host"
+      - /app/node_modules
     depends_on:
       - backend
     restart: always

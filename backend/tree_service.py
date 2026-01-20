@@ -4,6 +4,7 @@ import time
 import re
 from openai import OpenAI
 from dotenv import load_dotenv
+from utils import valor_por_extenso
 
 # Carrega as variáveis do arquivo .env
 load_dotenv()
@@ -42,7 +43,7 @@ TREE_FLOW = {
         }
     },
     "APRESENTACAO_DIVIDA": {
-        "text": "Obrigado. Consta aqui um débito com o {empresa} no valor de R$ {valor}. Hoje temos três caminhos: quitação à vista com 30% de desconto, parcelamento em 12x ou uma proposta personalizada. Qual dessas opções você prefere?",
+        "text": "Obrigado. Consta aqui um débito com o {empresa} no valor de {valor_extenso}. Hoje temos três caminhos: quitação à vista com 30% de desconto, parcelamento em 12x ou uma proposta personalizada. Qual dessas opções você prefere?",
         "branches": {
             "AVISTA": "FECHAMENTO_AVISTA",
             "PARCELADO": "FECHAMENTO_PARCELADO",
@@ -52,14 +53,14 @@ TREE_FLOW = {
         }
     },
     "FECHAMENTO_AVISTA": {
-        "text": "Excelente escolha. Com o desconto, o valor fica R$ {valor_desconto}. Posso gerar o código Pix agora para você?",
+        "text": "Excelente escolha. Com o desconto, o valor fica {valor_desconto_extenso}. Posso gerar o código Pix agora para você?",
         "branches": {
             "ACEITOU": "FINALIZACAO_SUCESSO",
             "NEGOU": "NEGOCIACAO_VALOR"
         }
     },
     "FECHAMENTO_PARCELADO": {
-        "text": "Com certeza. Fica em 12 parcelas de R$ {valor_parcela_12}. Podemos formalizar esse acordo?",
+        "text": "Com certeza. Fica em 12 parcelas de {valor_parcela_12_extenso}. Podemos formalizar esse acordo?",
         "branches": {
             "ACEITOU": "FINALIZACAO_SUCESSO",
             "NEGOU": "NEGOCIACAO_VALOR"
@@ -180,8 +181,11 @@ def get_tree_response(user_text, session_data):
         "nome": nome,
         "empresa": debt["empresa"],
         "valor": f"{valor:.2f}",
+        "valor_extenso": valor_por_extenso(valor),
         "valor_desconto": f"{valor * 0.7:.2f}",
+        "valor_desconto_extenso": valor_por_extenso(valor * 0.7),
         "valor_parcela_12": f"{(valor * 1.1) / 12:.2f}",
+        "valor_parcela_12_extenso": valor_por_extenso((valor * 1.1) / 12),
     }
 
     next_config = TREE_FLOW.get(next_state, TREE_FLOW["FINALIZACAO_NEGATIVA"])
@@ -190,3 +194,37 @@ def get_tree_response(user_text, session_data):
     print(f"[TREE] Transição: {current_state} --({intent})--> {next_state}")
     
     return response_text, next_state, updates
+
+def get_next_possible_responses(current_state, session_data):
+    """Retorna uma lista de todos os textos possíveis para o próximo passo na árvore."""
+    state_config = TREE_FLOW.get(current_state)
+    if not state_config or not state_config.get("branches"):
+        return []
+
+    possible_next_states = set(state_config["branches"].values())
+    
+    debt = session_data.get("debt_info") or MOCK_DEBTS["default"]
+    nome = session_data.get("nome_cliente") or "Cliente"
+    valor = debt["valor"]
+    
+    template_vars = {
+        "nome": nome,
+        "empresa": debt["empresa"],
+        "valor": f"{valor:.2f}",
+        "valor_extenso": valor_por_extenso(valor),
+        "valor_desconto": f"{valor * 0.7:.2f}",
+        "valor_desconto_extenso": valor_por_extenso(valor * 0.7),
+        "valor_parcela_12": f"{(valor * 1.1) / 12:.2f}",
+        "valor_parcela_12_extenso": valor_por_extenso((valor * 1.1) / 12),
+    }
+
+    responses = []
+    for next_state in possible_next_states:
+        next_config = TREE_FLOW.get(next_state)
+        if next_config and next_config.get("text"):
+            try:
+                responses.append(next_config["text"].format(**template_vars))
+            except:
+                continue
+    
+    return responses
