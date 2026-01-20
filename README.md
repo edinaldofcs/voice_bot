@@ -13,7 +13,9 @@ Uma solução de ponta para comunicação por voz em tempo real, integrando Inte
 - **Barge-in (Interrupção)**: A IA interrompe a fala imediatamente quando detecta a voz do usuário, permitindo um diálogo natural.
 - **Latência Ultra-Baixa**:
   - **Streaming de Áudio**: Respostas processadas em chunks para início imediato da fala.
-  - **Cache Persistente de TTS**: Áudios de frases recorrentes são cacheados em disco, reduzindo o tempo de resposta para milissegundos.
+  - **Cache Persistente de TTS**: Áudios de frases recorrentes são cacheados em disco.
+  - **Cache Proativo (Look-ahead Caching)**: No modo Árvore, o sistema gera antecipadamente o áudio das próximas falas possíveis enquanto o usuário ainda está interagindo.
+- **Conversão por Extenso**: Valores monetários e números são convertidos automaticamente para texto (ex: R$ 1.250,50 vira "mil duzentos e cinquenta reais e cinquenta centavos"), garantindo uma leitura natural pelo TTS.
 - **Extração Inteligente de Dados**: Identificação automática de Nome e CPF durante a conversa.
 - **Interface Premium**: UI moderna com visualizador de voz dinâmico, status badges e design responsivo.
 
@@ -27,6 +29,7 @@ Uma solução de ponta para comunicação por voz em tempo real, integrando Inte
 - **Edge-TTS**: Geração de voz de alta qualidade com controle de velocidade.
 - **SpeechRecognition**: Transcrição de áudio para texto (STT).
 - **Pydub**: Manipulação e conversão de formatos de áudio.
+- **Docker**: Containerização completa para fácil deploy e padronização de ambiente.
 
 ### Frontend
 - **React + Vite**: Interface rápida e reativa.
@@ -37,9 +40,11 @@ Uma solução de ponta para comunicação por voz em tempo real, integrando Inte
 
 ## 📋 Pré-requisitos
 
-- **Python 3.10+**
-- **Node.js 18+**
-- **FFmpeg**: Necessário para a conversão de áudio no backend.
+- **Docker e Docker Compose** (Recomendado)
+- Ou instalação local:
+  - **Python 3.10+**
+  - **Node.js 18+**
+  - **FFmpeg**: Necessário para a conversão de áudio no backend.
 - **Chave de API da OpenAI**: Necessária para o processamento de linguagem natural.
 
 ---
@@ -59,14 +64,14 @@ Uma solução de ponta para comunicação por voz em tempo real, integrando Inte
    ```
 
 3. **Execução com Docker (Recomendado)**:
-   Se você tem o Docker e Docker Compose instalados, pode subir todo o ambiente (Backend + Frontend) com um único comando:
+   O projeto está totalmente configurado para rodar em containers, o que isola as dependências de sistema (como FFmpeg):
    ```bash
    docker-compose up --build
    ```
-   Isso garantirá que todas as dependências de sistema (como FFmpeg) estejam configuradas corretamente dentro dos containers.
+   - Backend: `http://localhost:8000`
+   - Frontend: `http://localhost:5173`
 
-4. **Instalação Automática (Local)**:
-   O projeto conta com um script que automatiza a limpeza de portas e inicialização local:
+4. **Execução Local (Alternativa)**:
    ```bash
    chmod +x start.sh
    ./start.sh
@@ -80,7 +85,7 @@ Uma solução de ponta para comunicação por voz em tempo real, integrando Inte
 2. Escolha entre o modo **IA Generativa** (conversa livre) ou **Fluxo de Árvore** (negociação estruturada).
 3. Clique no botão de telefone para iniciar a chamada.
 4. Fale naturalmente. O sistema detectará o fim da sua frase (após 500ms de silêncio) ou permitirá que você interrompa a IA a qualquer momento.
-5. No modo Árvore, tente informar dados como: *"Meu nome é João e meu CPF é 12345678901"* para ver a integração com a API mock.
+5. No modo Árvore, tente informar dados como: *"Meu nome é João e meu CPF é 12345678901"* para ver a integração com a API mock e a fluidez do cache proativo.
 
 ---
 
@@ -92,14 +97,18 @@ Uma solução de ponta para comunicação por voz em tempo real, integrando Inte
 │   ├── main.py            # Servidor FastAPI e lógica de WebSocket
 │   ├── tree_service.py    # Lógica da Máquina de Estados (Árvore)
 │   ├── llm_service.py     # Integração com OpenAI (Streaming)
+│   ├── utils.py           # Utilitários (Conversão de valores por extenso)
 │   ├── tts_cache/         # Cache persistente de arquivos de áudio
+│   ├── Dockerfile         # Configuração do container backend
 │   └── requirements.txt   # Dependências Python
 ├── frontend/
 │   ├── src/
 │   │   ├── App.jsx        # Componente principal e lógica de áudio
 │   │   └── index.css      # Estilização premium
+│   ├── Dockerfile         # Configuração do container frontend
 │   └── package.json       # Dependências Node.js
-└── start.sh               # Script de inicialização rápida
+├── docker-compose.yml     # Orquestração dos serviços
+└── start.sh               # Script de inicialização rápida local
 ```
 
 ---
