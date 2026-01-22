@@ -38,38 +38,71 @@ print(f"[INIT] Cache de áudio persistente em: {TTS_CACHE_DIR}")
 # In-memory session data
 sessions = {}
 
-async def get_cached_tts(text):
-    """Retorna o conteúdo do áudio (bytes), gerando-o se não estiver no cache persistente."""
-    # Criamos um hash do texto, voz e velocidade para o nome do arquivo
-    text_hash = hashlib.md5(f"{text}_{TTS_VOICE}_{TTS_RATE}".encode()).hexdigest()
-    cache_path = os.path.join(TTS_CACHE_DIR, f"{text_hash}.mp3")
-    
-    if not os.path.exists(cache_path):
-        print(f"[TTS] Gerando novo áudio (rate {TTS_RATE}) para: \"{text[:30]}...\"")
-        communicate = edge_tts.Communicate(text, TTS_VOICE, rate=TTS_RATE)
-        await communicate.save(cache_path)
+async def get_audio_segment(text, is_static=True):
+    """Retorna um AudioSegment, gerando-o se necessário. Estáticos usam cache persistente."""
+    if is_static:
+        text_hash = hashlib.md5(f"{text}_{TTS_VOICE}_{TTS_RATE}".encode()).hexdigest()
+        cache_path = os.path.join(TTS_CACHE_DIR, f"{text_hash}.mp3")
+        
+        if not os.path.exists(cache_path):
+            print(f"[TTS] Gerando estático: \"{text[:30]}...\"")
+            communicate = edge_tts.Communicate(text, TTS_VOICE, rate=TTS_RATE)
+            await communicate.save(cache_path)
+        
+        return AudioSegment.from_file(cache_path)
     else:
-        print(f"[TTS] Usando cache para: \"{text[:30]}...\"")
-    
-    with open(cache_path, "rb") as f:
-        return f.read()
+        # Dinâmico: gera na hora sem salvar permanentemente
+        print(f"[TTS] Gerando dinâmico: \"{text}\"")
+        communicate = edge_tts.Communicate(text, TTS_VOICE, rate=TTS_RATE)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
+            await communicate.save(tmp.name)
+            segment = AudioSegment.from_file(tmp.name)
+            os.unlink(tmp.name)
+            return segment
 
-async def generate_and_send_tts(sentence, websocket, client_id, sentence_count):
-    """Gera o áudio (ou pega do cache) e envia via websocket."""
+async def generate_and_send_stitched_audio(segments, websocket, client_id):
+    """Gera áudio concatenado a partir de segmentos estáticos/dinâmicos."""
     tts_start = time.time()
-    audio_data = await get_cached_tts(sentence)
+    
+    tasks = []
+    for seg in segments:
+        tasks.append(get_audio_segment(seg["text"], is_static=(seg["type"] == "static")))
+    
+    audio_segments = await asyncio.gather(*tasks)
+    
+    if not audio_segments:
+        return
+        
+    combined = audio_segments[0]
+    for seg in audio_segments[1:]:
+        combined += seg
+    
+    # Exportar para bytes
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
+        combined.export(tmp.name, format="mp3")
+        with open(tmp.name, "rb") as f:
+            audio_data = f.read()
+        os.unlink(tmp.name)
+        
     await websocket.send_bytes(audio_data)
-    print(f"[{client_id}] Sentença {sentence_count} Áudio pronto em: {time.time() - tts_start:.4f}s")
+    print(f"[{client_id}] Áudio montado em: {time.time() - tts_start:.4f}s")
 
 async def pre_cache_next_responses(current_state, session_data):
-    """Gera o cache de áudio para todas as próximas falas possíveis da árvore."""
-    next_texts = get_next_possible_responses(current_state, session_data)
-    if not next_texts:
+    """Gera o cache apenas para as partes estáticas das próximas falas."""
+    next_segments_list = get_next_possible_responses(current_state, session_data)
+    if not next_segments_list:
         return
     
-    print(f"[CACHE] Pré-carregando {len(next_texts)} possíveis próximas falas...")
-    tasks = [get_cached_tts(text) for text in next_texts]
-    await asyncio.gather(*tasks)
+    print(f"[CACHE] Pré-carregando partes estáticas de {len(next_segments_list)} caminhos...")
+    static_texts = []
+    for segments in next_segments_list:
+        for seg in segments:
+            if seg["type"] == "static":
+                static_texts.append(seg["text"])
+    
+    if static_texts:
+        tasks = [get_audio_segment(text, is_static=True) for text in set(static_texts)]
+        await asyncio.gather(*tasks)
     print(f"[CACHE] Pré-carregamento concluído.")
 
 @app.websocket("/ws")
@@ -136,26 +169,26 @@ async def websocket_endpoint(websocket: WebSocket):
                 session_data = sessions[client_id]
                 
                 if mode == "tree":
-                    # MODO ÁRVORE PROFISSIONAL
-                    ai_text, next_state, updates = get_tree_response(user_text, session_data)
+                    # MODO ÁRVORE PROFISSIONAL COM STITCHED AUDIO
+                    segments, next_state, updates = get_tree_response(user_text, session_data)
                     
                     session_data.update(updates)
                     session_data["tree_state"] = next_state
                     
+                    full_text = "".join([s["text"] for s in segments])
                     print(f"[{client_id}] Árvore -> {next_state}")
                     
-                    await websocket.send_json({"type": "ai_text_chunk", "content": ai_text})
-                    await generate_and_send_tts(ai_text, websocket, client_id, 1)
-                    await websocket.send_json({"type": "ai_text_complete", "content": ai_text})
+                    await websocket.send_json({"type": "ai_text_chunk", "content": full_text})
+                    await generate_and_send_stitched_audio(segments, websocket, client_id)
+                    await websocket.send_json({"type": "ai_text_complete", "content": full_text})
                     
                     session_data["history"].append({"role": "user", "text": user_text})
-                    session_data["history"].append({"role": "assistant", "text": ai_text})
+                    session_data["history"].append({"role": "assistant", "text": full_text})
                     
-                    # Proactive Caching: Gera áudios para os próximos estados possíveis em background
                     asyncio.create_task(pre_cache_next_responses(next_state, session_data))
                     
                 else:
-                    # MODO IA
+                    # MODO IA (Simples, sem stitch por enquanto)
                     full_ai_text = ""
                     history = session_data["history"]
                     sentence_count = 0
@@ -165,7 +198,11 @@ async def websocket_endpoint(websocket: WebSocket):
                         sentence_count += 1
                         full_ai_text += " " + sentence
                         await websocket.send_json({"type": "ai_text_chunk", "content": sentence})
-                        await generate_and_send_tts(sentence, websocket, client_id, sentence_count)
+                        
+                        # Para o modo IA, usamos o formato antigo de cache simples
+                        # mas adaptado para a nova função se necessário. 
+                        # Aqui vamos apenas converter a sentença em um segmento estático único.
+                        await generate_and_send_stitched_audio([{"type": "static", "text": sentence}], websocket, client_id)
                     
                     history.append({"role": "user", "text": user_text})
                     history.append({"role": "assistant", "text": full_ai_text.strip()})
