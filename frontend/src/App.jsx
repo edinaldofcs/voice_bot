@@ -25,8 +25,8 @@ function App() {
   const silenceTimer = useRef(null)
   const streamRef = useRef(null)
 
-  const SILENCE_THRESHOLD = 0.015
-  const SILENCE_DURATION = 500
+  const SILENCE_THRESHOLD = 0.04 // Aumentado de 0.015 para 0.04 para ignorar ruídos de fundo
+  const SILENCE_DURATION = 800  // Aumentado de 500ms para 800ms para evitar cortes precoces
 
   useEffect(() => {
     statusRef.current = status
@@ -207,7 +207,13 @@ function App() {
 
     try {
       if (!streamRef.current) {
-        streamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true })
+        streamRef.current = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          }
+        })
       }
 
       mediaRecorder.current = new MediaRecorder(streamRef.current)

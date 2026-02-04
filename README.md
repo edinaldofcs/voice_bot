@@ -63,17 +63,30 @@ Uma solução de ponta para comunicação por voz em tempo real, integrando Inte
    OPENAI_API_KEY=sua_chave_aqui
    ```
 
-3. **Execução com Docker (Recomendado)**:
-   O projeto está totalmente configurado para rodar em containers, o que isola as dependências de sistema (como FFmpeg):
-   ```bash
-   docker-compose up --build
-   ```
-   - Backend: `http://localhost:8000`
-   - Frontend: `http://localhost:5173`
+## Como Executar
 
-4. **Execução Local (Alternativa)**:
+### Opção 1: Docker (Recomendado para Windows/Linux/Mac)
+1. Certifique-se de ter o Docker Desktop instalado.
+2. No terminal, na raiz do projeto, execute:
+   ```bash
+   docker compose up --build
+   ```
+3. Acesse `http://localhost:5173` no seu navegador.
+
+### Opção 2: Localmente (Windows - Nativo)
+1. Execute o arquivo `start.bat` dando um clique duplo ou via CMD:
+   ```cmd
+   start.bat
+   ```
+   *O script criará o ambiente virtual, instalará as dependências e iniciará o sistema.*
+
+### Opção 3: Localmente (Linux - Nativo)
+1. Dê permissão de execução ao script:
    ```bash
    chmod +x start.sh
+   ```
+2. Execute o script:
+   ```bash
    ./start.sh
    ```
 

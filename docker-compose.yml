@@ -7,6 +7,7 @@ services:
     volumes:
       - ./backend/tts_cache:/app/tts_cache
       - ./backend/.env:/app/.env
+      - ./backend/conversation.log:/app/conversation.log
     environment:
       - PYTHONUNBUFFERED=1
     restart: always

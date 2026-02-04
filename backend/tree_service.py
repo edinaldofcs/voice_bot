@@ -2,9 +2,17 @@ import os
 import json
 import time
 import re
+import httpx
+from pydantic import BaseModel
+from typing import Optional, List
 from openai import OpenAI
 from dotenv import load_dotenv
 from utils import valor_por_extenso
+
+class TreeAnalysis(BaseModel):
+    next_node_id: str
+    captured_value: Optional[str] = None
+    reasoning: str
 
 # Carrega as variáveis do arquivo .env
 load_dotenv()
@@ -19,205 +27,20 @@ MOCK_DEBTS = {
     "default": {"nome": "Cliente", "valor": 100.00, "empresa": "nossa empresa parceira"}
 }
 
-TREE_FLOW_DATA = {
-  "flow_id": "negociacao_divida_cliente",
-  "start_node": "inicio",
-  "nodes": {
-    "inicio": {
-      "type": "START",
-      "message": "Olá! Vi que você tem um débito em aberto. Como posso te ajudar hoje?",
-      "next": "identificar_intencao"
-    },
-
-    "identificar_intencao": {
-      "type": "INTENT",
-      "tag": "identificar_intencao",
-      "description": "Identificar o objetivo principal do cliente",
-      "examples": [
-        "quero negociar",
-        "não consigo pagar agora",
-        "preciso de um acordo",
-        "quero pagar minha dívida"
-      ],
-      "intents": {
-        "negociar_divida": "escolher_tipo_negociacao",
-        "consultar_valor": "consultar_valor_divida",
-        "falar_com_atendente": "encaminhar_atendente"
-      }
-    },
-
-    "consultar_valor_divida": {
-      "type": "INFO",
-      "tag": "consultar_valor_divida",
-      "message": "O valor atual da sua dívida é {{valor_divida}}.",
-      "next": "escolher_tipo_negociacao"
-    },
-
-    "escolher_tipo_negociacao": {
-      "type": "DECISION",
-      "tag": "escolher_tipo_negociacao",
-      "message": "Qual opção funciona melhor para você? Renegociar a data, parcelar a dívida, solicitar um desconto ou quitar à vista?",
-      "options": {
-        "renegociar_data": "renegociar_data",
-        "parcelar_divida": "parcelar_divida",
-        "solicitar_desconto": "solicitar_desconto",
-        "quitar_a_vista": "quitar_a_vista"
-      }
-    },
-
-    "renegociar_data": {
-      "type": "ACTION",
-      "tag": "renegociar_data",
-      "description": "Cliente quer alterar a data de vencimento",
-      "examples": [
-        "posso pagar outro dia?",
-        "mudar a data do boleto",
-        "adiar vencimento"
-      ],
-      "next": "informar_nova_data",
-      "back_to": "escolher_tipo_negociacao"
-    },
-
-    "informar_nova_data": {
-      "type": "INPUT",
-      "tag": "informar_nova_data",
-      "message": "Qual nova data de vencimento você deseja?",
-      "next": "validar_nova_data",
-      "back_to": "renegociar_data"
-    },
-
-    "validar_nova_data": {
-      "type": "VALIDATION",
-      "tag": "validar_nova_data",
-      "rules": {
-        "min_days_from_today": 3,
-        "max_days_from_today": 30
-      },
-      "on_success": "confirmar_acordo",
-      "on_fail": "data_invalida"
-    },
-
-    "data_invalida": {
-      "type": "INFO",
-      "message": "Essa data não está disponível. Por favor, informe outra.",
-      "next": "informar_nova_data"
-    },
-
-    "parcelar_divida": {
-      "type": "ACTION",
-      "tag": "parcelar_divida",
-      "description": "Cliente deseja parcelar a dívida",
-      "examples": [
-        "posso parcelar?",
-        "dividir em vezes",
-        "pagar aos poucos"
-      ],
-      "next": "informar_parcelas",
-      "back_to": "escolher_tipo_negociacao"
-    },
-
-    "informar_parcelas": {
-      "type": "INPUT",
-      "tag": "informar_parcelas",
-      "message": "Em quantas parcelas você deseja pagar? Podemos fazer de 2 a 12 vezes.",
-      "next": "validar_parcelas",
-      "back_to": "parcelar_divida"
-    },
-
-    "validar_parcelas": {
-      "type": "VALIDATION",
-      "tag": "validar_parcelas",
-      "rules": {
-        "min": 2,
-        "max": 12
-      },
-      "on_success": "simular_parcelamento",
-      "on_fail": "parcelas_invalidas"
-    },
-
-    "parcelas_invalidas": {
-      "type": "INFO",
-      "message": "Número de parcelas indisponível. Tente outra opção.",
-      "next": "informar_parcelas"
-    },
-
-    "simular_parcelamento": {
-      "type": "INFO",
-      "tag": "simular_parcelamento",
-      "message": "Cada parcela ficará no valor de {{valor_parcela}}.",
-      "next": "confirmar_acordo"
-    },
-
-    "solicitar_desconto": {
-      "type": "ACTION",
-      "tag": "solicitar_desconto",
-      "description": "Cliente deseja desconto para quitar a dívida",
-      "examples": [
-        "tem desconto?",
-        "consigo pagar menos?",
-        "desconto à vista"
-      ],
-      "next": "calcular_desconto",
-      "back_to": "escolher_tipo_negociacao"
-    },
-
-    "calcular_desconto": {
-      "type": "ACTION",
-      "tag": "calcular_desconto",
-      "on_available": "confirmar_acordo",
-      "on_unavailable": "oferecer_parcelamento"
-    },
-
-    "oferecer_parcelamento": {
-      "type": "INFO",
-      "message": "No momento não há desconto disponível. Podemos parcelar se preferir.",
-      "next": "parcelar_divida"
-    },
-
-    "quitar_a_vista": {
-      "type": "ACTION",
-      "tag": "quitar_a_vista",
-      "description": "Cliente deseja quitar a dívida à vista",
-      "examples": [
-        "quero pagar tudo",
-        "quitar agora",
-        "pagar à vista"
-      ],
-      "next": "confirmar_acordo",
-      "back_to": "escolher_tipo_negociacao"
-    },
-
-    "confirmar_acordo": {
-      "type": "CONFIRMATION",
-      "tag": "confirmar_acordo",
-      "message": "Resumo do acordo: Valor total de {{valor_final}}, na condição de {{condicao}}. Posso confirmar?",
-      "options": {
-        "confirmar": "final_sucesso",
-        "alterar": "escolher_tipo_negociacao",
-        "cancelar": "final_falha"
-      }
-    },
-
-    "final_sucesso": {
-      "type": "END_SUCCESS",
-      "message": "Perfeito! Seu acordo foi confirmado e o boleto será enviado. Obrigado pelo contato!"
-    },
-
-    "final_falha": {
-      "type": "END_FAIL",
-      "message": "Tudo bem. Se precisar de ajuda novamente, estarei por aqui. Tenha um bom dia."
-    },
-
-    "encaminhar_atendente": {
-      "type": "END_FAIL",
-      "message": "Vou te encaminhar para um atendente humano agora. Por favor, aguarde um momento."
-    }
-  }
-}
+from flow_data import TREE_FLOW_DATA
 
 def mock_api_query(cpf):
     clean_cpf = re.sub(r'\D', '', cpf) if cpf else "default"
-    return MOCK_DEBTS.get(clean_cpf, MOCK_DEBTS["default"])
+    try:
+        # Chama a API Mock que criamos (rodando na porta 8001)
+        with httpx.Client() as client:
+            response = client.get(f"http://localhost:8001/debts/{clean_cpf}", timeout=2.0)
+            if response.status_code == 200:
+                return response.json()
+    except Exception as e:
+        print(f"[API ERROR] Falha ao consultar API Mock: {e}")
+    
+    return MOCK_DEBTS["default"]
 
 def get_template_vars(session_data):
     debt = session_data.get("debt_info") or MOCK_DEBTS["default"]
@@ -256,28 +79,26 @@ def apply_template(text, vars):
     return text
 
 def classify_with_llm(user_text, node_id, node_config, history=[]):
-    node_type = node_config["type"]
+    is_internal = user_text.startswith("[SYSTEM]")
     
     system_prompt = f"""
-Você é um assistente de voz para cobrança. Analise a fala do usuário para o nó '{node_id}' ({node_type}).
+Você é um assistente de voz para cobrança. Analise a situação para o nó '{node_id}'.
+Tipo do nó: {node_config.get('type')}
+Descrição: {node_config.get('description', 'N/A')}
+
+Sua tarefa é determinar o próximo nó (next_node_id) e extrair valores se necessário.
+
+Configuração do nó:
+{json.dumps(node_config, indent=2, ensure_ascii=False)}
+
+Instruções:
+1. Se o nó tiver 'intents' ou 'options', mapeie a entrada para a chave correspondente e retorne o VALOR daquela chave (o ID do próximo nó).
+2. Se o nó for 'INPUT', extraia o valor para 'captured_value' e use o campo 'next' como 'next_node_id'.
+3. Se o nó tiver apenas um campo 'next', use-o como 'next_node_id'.
+4. CRÍTICO: Você DEVE escolher um dos IDs de destino presentes na configuração do nó. 
+5. Se for uma decisão interna ([SYSTEM]), escolha o caminho mais lógico baseado no histórico.
 """
     
-    if node_type == "INTENT":
-        options = node_config["intents"]
-        examples = node_config.get("examples", [])
-        system_prompt += f"\nDetermine a intenção do usuário entre as opções: {list(options.keys())}."
-        system_prompt += f"\nExemplos de referência: {examples}"
-        system_prompt += "\nResponda APENAS um JSON: {\"choice\": \"nome_da_opcao\"}"
-        
-    elif node_type == "DECISION" or node_type == "CONFIRMATION":
-        options = node_config["options"]
-        system_prompt += f"\nEscolha a melhor opção entre: {list(options.keys())}."
-        system_prompt += "\nResponda APENAS um JSON: {\"choice\": \"nome_da_opcao\"}"
-        
-    elif node_type == "INPUT":
-        system_prompt += "\nExtraia o valor solicitado (data, número de parcelas, etc)."
-        system_prompt += "\nResponda APENAS um JSON: {\"value\": \"valor_extraido\"}"
-
     messages = [{"role": "system", "content": system_prompt}]
     for msg in history[-4:]:
         role = "assistant" if msg["role"] in ["assistant", "ai"] else "user"
@@ -285,16 +106,21 @@ Você é um assistente de voz para cobrança. Analise a fala do usuário para o 
     messages.append({"role": "user", "content": user_text})
 
     try:
-        response = client.chat.completions.create(
+        response = client.responses.parse(
             model="gpt-4o-mini",
-            messages=messages,
-            response_format={"type": "json_object"},
-            temperature=0
+            input=messages,
+            text_format=TreeAnalysis,
         )
-        return json.loads(response.choices[0].message.content)
+        result = response.output_parsed
+        # Segurança: Se a IA retornar o mesmo nó em uma decisão automática, forçamos o avanço
+        if is_internal and result.next_node_id == node_id:
+            options = node_config.get("options", {})
+            if options:
+                result.next_node_id = list(options.values())[0]
+        return result
     except Exception as e:
         print(f"[LLM ERROR] {e}")
-        return {}
+        return TreeAnalysis(next_node_id=node_id, reasoning=f"Erro: {str(e)}")
 
 def get_tree_response(user_text, session_data):
     current_state = session_data.get("tree_state", "START")
@@ -313,19 +139,9 @@ def get_tree_response(user_text, session_data):
             next_node_id = TREE_FLOW_DATA["start_node"]
         else:
             llm_result = classify_with_llm(user_text, current_state, current_node, history)
-            
-            if current_node["type"] == "INTENT":
-                choice = llm_result.get("choice")
-                next_node_id = current_node["intents"].get(choice, current_state)
-            elif current_node["type"] == "DECISION" or current_node["type"] == "CONFIRMATION":
-                choice = llm_result.get("choice")
-                next_node_id = current_node["options"].get(choice, current_state)
-            elif current_node["type"] == "INPUT":
-                val = llm_result.get("value")
-                updates["captured_input"] = val
-                next_node_id = current_node.get("next")
-            else:
-                next_node_id = current_node.get("next")
+            next_node_id = llm_result.next_node_id
+            if llm_result.captured_value:
+                updates["captured_input"] = llm_result.captured_value
 
     # 2. Loop de transição automática
     while next_node_id:
@@ -370,7 +186,14 @@ def get_tree_response(user_text, session_data):
             continue
             
         elif node["type"] == "ACTION":
-            if next_node_id == "calcular_desconto":
+            if next_node_id == "validar_cpf":
+                cpf_input = updates.get("captured_input") or session_data.get("captured_input")
+                debt_info = mock_api_query(cpf_input)
+                updates["debt_info"] = debt_info
+                updates["nome_cliente"] = debt_info["nome"]
+                next_node_id = node.get("next")
+                continue
+            elif next_node_id == "calcular_desconto":
                 if time.time() % 10 < 8:
                     updates["agreement_type"] = "desconto"
                     next_node_id = node["on_available"]
@@ -381,10 +204,35 @@ def get_tree_response(user_text, session_data):
                 updates["agreement_type"] = "avista"
                 next_node_id = node.get("next")
                 continue
+            elif next_node_id == "verificar_necessidade_api":
+                # Decisão automática da IA baseada no contexto
+                print(f"[AUTO-DECISION] IA decidindo necessidade de API...")
+                llm_result = classify_with_llm("[SYSTEM] O sistema está processando os dados. Decida o próximo passo baseado no histórico e perfil do cliente.", next_node_id, node, history)
+                next_node_id = llm_result.next_node_id
+                print(f"[AUTO-DECISION] IA escolheu: {next_node_id}")
+                continue
+            elif "options" in node:
+                # Handler genérico para decisões automáticas da IA
+                llm_result = classify_with_llm("Decisão automática do sistema.", next_node_id, node, history)
+                next_node_id = llm_result.next_node_id
+                continue
             else:
                 next_node_id = node.get("next")
                 if not next_node_id: break
                 continue
+
+        elif node["type"] == "API":
+            # Simulação de chamada de API definida no fluxo
+            tag = node.get("tag")
+            print(f"[API] Chamando {tag}: {node.get('method')} {node.get('endpoint')}")
+            
+            # Aqui você faria o request real. Por enquanto, simulamos um resultado.
+            if tag == "consultar_score":
+                updates["score_cliente"] = 750 # Exemplo de dado retornado
+                print(f"[API] Score obtido: 750")
+            
+            next_node_id = node.get("next")
+            continue
 
         if node["type"] in ["INTENT", "DECISION", "INPUT", "CONFIRMATION", "END_SUCCESS", "END_FAIL"]:
             break

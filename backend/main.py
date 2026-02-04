@@ -4,15 +4,43 @@ import tempfile
 import json
 import time
 import hashlib
+import subprocess
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 import speech_recognition as sr
 from pydub import AudioSegment
+import logging
+from datetime import datetime
 import edge_tts
+import sys
 from llm_service import generate_reply_stream
 from tree_service import get_tree_response, get_next_possible_responses
 
+# Configuração de Logging
+LOG_FILE = os.path.join(os.path.dirname(__file__), "conversation.log")
+
+# Limpa o arquivo de log ao iniciar o servidor
+with open(LOG_FILE, "w", encoding="utf-8") as f:
+    f.write(f"--- Nova Sessão de Log: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ---\n")
+
+def log_conversation(client_id, role, message, duration=None):
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    duration_str = f" [{duration:.2f}s]" if duration is not None else ""
+    log_entry = f"[{timestamp}] [{client_id}] {role.upper()}: {message}{duration_str}\n"
+    
+    # Print no console
+    print(log_entry, end="")
+    
+    # Salva no arquivo
+    with open(LOG_FILE, "a", encoding="utf-8") as f:
+        f.write(log_entry)
+
 app = FastAPI()
+
+# Inicia a API Mock em um processo separado
+print("[INIT] Iniciando API Mock de Dívidas na porta 8001...")
+mock_api_path = os.path.join(os.path.dirname(__file__), "mock_api.py")
+subprocess.Popen([sys.executable, mock_api_path])
 
 app.add_middleware(
     CORSMiddleware,
@@ -35,6 +63,9 @@ if not os.path.exists(TTS_CACHE_DIR):
     os.makedirs(TTS_CACHE_DIR)
 print(f"[INIT] Cache de áudio persistente em: {TTS_CACHE_DIR}")
 
+# Lock para evitar que múltiplas requisições tentem gerar o mesmo áudio estático simultaneamente
+tts_lock = asyncio.Lock()
+
 # In-memory session data
 sessions = {}
 
@@ -45,9 +76,12 @@ async def get_audio_segment(text, is_static=True):
         cache_path = os.path.join(TTS_CACHE_DIR, f"{text_hash}.mp3")
         
         if not os.path.exists(cache_path):
-            print(f"[TTS] Gerando estático: \"{text[:30]}...\"")
-            communicate = edge_tts.Communicate(text, TTS_VOICE, rate=TTS_RATE)
-            await communicate.save(cache_path)
+            async with tts_lock:
+                # Dupla checagem após adquirir o lock
+                if not os.path.exists(cache_path):
+                    print(f"[TTS] Gerando estático: \"{text[:30]}...\"")
+                    communicate = edge_tts.Communicate(text, TTS_VOICE, rate=TTS_RATE)
+                    await communicate.save(cache_path)
         
         return AudioSegment.from_file(cache_path)
     else:
@@ -162,7 +196,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 if not user_text:
                     continue
 
-                print(f"[{client_id}] STT ({time.time() - stt_start:.2f}s): \"{user_text}\"")
+                log_conversation(client_id, "user", user_text, duration=time.time() - stt_start)
                 await websocket.send_json({"type": "user_transcript", "content": user_text})
 
                 mode = sessions[client_id]["mode"]
@@ -170,12 +204,13 @@ async def websocket_endpoint(websocket: WebSocket):
                 
                 if mode == "tree":
                     # MODO ÁRVORE PROFISSIONAL COM STITCHED AUDIO
+                    ai_start = time.time()
                     segments, next_state, updates = get_tree_response(user_text, session_data)
                     
                     session_data.update(updates)
                     session_data["tree_state"] = next_state
-                    
                     full_text = "".join([s["text"] for s in segments])
+                    log_conversation(client_id, "ai", full_text, duration=time.time() - ai_start)
                     print(f"[{client_id}] Árvore -> {next_state}")
                     
                     await websocket.send_json({"type": "ai_text_chunk", "content": full_text})
@@ -189,10 +224,10 @@ async def websocket_endpoint(websocket: WebSocket):
                     
                 else:
                     # MODO IA (Simples, sem stitch por enquanto)
-                    full_ai_text = ""
                     history = session_data["history"]
+                    full_ai_text = ""
                     sentence_count = 0
-                    
+                    ai_start = time.time()
                     for sentence in generate_reply_stream(user_text, history):
                         if not sentence: continue
                         sentence_count += 1
@@ -204,8 +239,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         # Aqui vamos apenas converter a sentença em um segmento estático único.
                         await generate_and_send_stitched_audio([{"type": "static", "text": sentence}], websocket, client_id)
                     
-                    history.append({"role": "user", "text": user_text})
-                    history.append({"role": "assistant", "text": full_ai_text.strip()})
+                    log_conversation(client_id, "ai", full_ai_text.strip(), duration=time.time() - ai_start)
                     await websocket.send_json({"type": "ai_text_complete", "content": full_ai_text.strip()})
                 
                 print(f"[{client_id}] Ciclo completo em: {time.time() - start_time:.2f}s\n")
